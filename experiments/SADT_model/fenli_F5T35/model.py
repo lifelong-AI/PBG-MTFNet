@@ -1,0 +1,167 @@
+# -*- coding: utf-8 -*-
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# ===================== 工具和基础模块 (无变动) =====================
+def normalize_adj(A: torch.Tensor, add_self_loop: bool = True, eps: float = 1e-6) -> torch.Tensor:
+    E = A.size(0)
+    if add_self_loop:
+        A = A + torch.eye(E, dtype=A.dtype, device=A.device)
+    deg = A.sum(dim=1).clamp_min(eps)
+    D_inv_sqrt = torch.diag(deg.pow(-0.5))
+    return D_inv_sqrt @ A @ D_inv_sqrt
+
+class GraphConvSimple(nn.Module):
+    def __init__(self, c_in, c_out, dropout=0.3):
+        super().__init__()
+        self.lin = nn.Linear(c_in, c_out, bias=False)
+        self.bn  = nn.BatchNorm1d(c_out)
+        self.do  = nn.Dropout(dropout)
+
+    def forward(self, x, A):
+        x_agg = torch.matmul(A, x)
+        h = self.lin(x_agg)
+        Bp, E, C = h.shape
+        h = self.bn(h.view(Bp * E, C)).view(Bp, E, C)
+        h = F.relu(h, inplace=True)
+        h = self.do(h)
+        return h
+
+class PerBandGCN_NoAlpha(nn.Module):
+    def __init__(self, A_hat, Freq, Cb, c_mid, dropout=0.5, normalize_A=True):
+        super().__init__()
+        assert A_hat.dim() == 2 and A_hat.size(0) == A_hat.size(1), "A_hat 必须 [E,E]"
+        self.register_buffer("A_hat", A_hat.clone())
+        self.Freq, self.Cb, self.c_mid = Freq, Cb, c_mid
+        self.normalize_A = bool(normalize_A)
+        if self.normalize_A:
+            self.register_buffer("A_norm", normalize_adj(A_hat))
+        else:
+            self.A_norm = None
+        self.embeds = nn.ModuleList([nn.Linear(1, Cb, bias=False) for _ in range(Freq)])
+        self.gcns   = nn.ModuleList([
+            GraphConvSimple(c_in=Cb, c_out=c_mid, dropout=dropout) for _ in range(Freq)
+        ])
+
+    def _get_A(self):
+        return self.A_norm if self.A_norm is not None else self.A_hat
+
+    def forward(self, x_BTFE):
+        B, T, Freq, E = x_BTFE.shape
+        A_use = self._get_A()
+        outs = []
+        for f in range(self.Freq):
+            xf = x_BTFE[:, :, f].unsqueeze(-1)
+            z  = self.embeds[f](xf)
+            z  = z.permute(0, 1, 3, 2).reshape(B * T, E, self.Cb)
+            hf = self.gcns[f](z, A_use).view(B, T, E, self.c_mid)
+            outs.append(hf.unsqueeze(2))
+        return torch.cat(outs, dim=2)
+
+
+# ===================== 【新模块】多尺度分离式时频卷积 =====================
+class TF_SeparableMultiScaleConvBank(nn.Module):
+    """
+    输入:  H_stack [B, T, F, E, C_in]
+    做法:  更忠实于原设计的分离卷积。包含两个并行的分离卷积支路：
+           - 支路1 (模拟3x3): 先 (1,3) 频域卷积，再 (3,1) 时域卷积
+           - 支路2 (模拟5x5): 先 (1,5) 频域卷积，再 (5,1) 时域卷积
+           将两支路输出拼接。
+    输出:  H_tf [B, T, E, C_out]
+    """
+    def __init__(self, C_in, C_out, pdrop=0.2):
+        super().__init__()
+        # 将输出通道均分给两个支路
+        c1 = C_out // 2
+        c2 = C_out - c1
+
+        # --- 支路1 (模拟 3x3) ---
+        self.br1_freq_conv = nn.Sequential(
+            nn.Conv2d(C_in, C_in, kernel_size=(1, 3), padding=(0, 1), bias=False),
+            nn.GELU(),
+        )
+        self.br1_time_conv = nn.Sequential(
+            nn.Conv2d(C_in, c1, kernel_size=(3, 1), padding=(1, 0), bias=False),
+            nn.GELU(),
+        )
+
+        # --- 支路2 (模拟 5x5) ---
+        self.br2_freq_conv = nn.Sequential(
+            nn.Conv2d(C_in, C_in, kernel_size=(1, 5), padding=(0, 2), bias=False),
+            nn.GELU(),
+        )
+        self.br2_time_conv = nn.Sequential(
+            nn.Conv2d(C_in, c2, kernel_size=(5, 1), padding=(2, 0), bias=False),
+            nn.GELU(),
+        )
+        
+        self.norm = nn.LayerNorm(C_out)
+        self.drop = nn.Dropout(pdrop)
+
+    def forward(self, H_stack):
+        B, T, F, E, C = H_stack.shape
+        x = H_stack.permute(0, 3, 4, 1, 2).contiguous().view(B * E, C, T, F)
+
+        # --- 支路1 ---
+        y1_f = self.br1_freq_conv(x)    # [B*E, C_in, T, F]
+        y1   = self.br1_time_conv(y1_f) # [B*E, c1, T, F]
+        
+        # --- 支路2 ---
+        y2_f = self.br2_freq_conv(x)    # [B*E, C_in, T, F]
+        y2   = self.br2_time_conv(y2_f) # [B*E, c2, T, F]
+
+        # 拼接两支路
+        y = torch.cat([y1, y2], dim=1)  # [B*E, C_out, T, F]
+
+        # LayerNorm & Dropout
+        y = y.permute(0, 2, 3, 1).contiguous().view(B * E, T * F, -1)
+        y = self.norm(y).view(B * E, T, F, -1)
+        y = self.drop(y)
+
+        # 融合频段 & 还原形状
+        y_tf = y.mean(dim=2)
+        y_tf = y_tf.view(B, E, T, -1).permute(0, 2, 1, 3).contiguous()
+        return y_tf
+
+
+# ===================== 【使用新模块的顶层模型】 =====================
+class STGCN_PB_Fsep_Ttemporal_FC(nn.Module):
+    """
+    流程: Per-Band GCN -> 多尺度分离式时频卷积 -> 池化 -> FC
+    """
+    def __init__(self, A_hat, Freq=5, Cb=16, Cmid=32, Ctf=48,
+                 dropout=0.5, normalize_A=True,
+                 num_classes=2, head_hidden=48, head_dropout=0.5):
+        super().__init__()
+        self.Freq, self.Cmid, self.Ctf = Freq, Cmid, Ctf
+
+        self.pbgcn = PerBandGCN_NoAlpha(
+            A_hat, Freq, Cb, Cmid, dropout=dropout, normalize_A=normalize_A
+        )
+        # 【替换为】新的、更精确的多尺度分离卷积模块
+        self.tfbank = TF_SeparableMultiScaleConvBank(C_in=Cmid, C_out=Ctf, pdrop=0.5)
+        
+        self._head = None
+        self._head_cfg = dict(num_classes=num_classes, head_hidden=head_hidden, head_dropout=head_dropout)
+
+    def _ensure_head(self, E: int, device: torch.device):
+        if self._head is None:
+            in_dim = E * self.Ctf
+            self._head = nn.Sequential(
+                nn.Linear(in_dim, self._head_cfg["head_hidden"], bias=False),
+                nn.ReLU(inplace=True),
+                nn.Dropout(self._head_cfg["head_dropout"]),
+                nn.Linear(self._head_cfg["head_hidden"], self._head_cfg["num_classes"], bias=True),
+            ).to(device)
+        return self._head
+
+    def forward(self, x_BTFE):
+        B, T, F, E = x_BTFE.shape
+        H_stack = self.pbgcn(x_BTFE)
+        H_tf = self.tfbank(H_stack)
+        feat = H_tf.mean(dim=1)
+        flat = feat.reshape(B, E * self.Ctf)
+        head = self._ensure_head(E=E, device=x_BTFE.device)
+        logits = head(flat)
+        return logits

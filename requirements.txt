@@ -1,0 +1,5 @@
+# Python 3.10 and PyTorch 2.4.0 are reported in the project summary.
+torch==2.4.0
+numpy
+pandas
+scikit-learn
