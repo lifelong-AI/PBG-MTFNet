@@ -4,7 +4,7 @@
 
 The `experiments` directory contains byte-for-byte copies of the 97 Python files recovered from the original experiment archive. Folder names and source behavior are preserved. README text is adapted from the author's PBG-MTFNet research project PDF and checked against the main `F5T35` implementation. Figures are extracted originals, not reconstructed diagrams.
 
-This snapshot excludes raw/preprocessed datasets, checkpoint binaries, cached bytecode, and historical result files. Raw-signal filtering, differential entropy extraction, and Kalman smoothing are described in the report but are not implemented by the included main loaders. These loaders begin with prepared feature samples.
+Only project source code, documentation, and architecture figures are included. Third-party datasets, samples, labels, model weights, caches, and historical result files are excluded. Data-loading modules are source code; they do not contain or distribute the datasets.
 
 ## Items to review before a new training run
 

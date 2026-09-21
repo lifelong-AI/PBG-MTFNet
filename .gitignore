@@ -21,3 +21,18 @@ checkpoints*/
 result*/
 viz_out*/
 *.log
+
+# Keep this repository limited to source code and project documentation.
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.zip
+*.rar
+*.7z
+labels/
+data_*/

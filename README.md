@@ -2,7 +2,7 @@
 
 **Per-band Graph Convolution and Multi-scale Temporal-Frequency Modeling for EEG Fatigue Detection**
 
-PBG-MTFNet models electrode-level spatial dependencies, frequency-specific EEG patterns, and temporal interactions across frequency bands. This repository collects the original PyTorch experiment scripts for SEED-VIG and SADT, including the main model, leave-one-subject-out (LOSO) experiments, ablations, and comparison models.
+PBG-MTFNet models electrode-level spatial dependencies, frequency-specific EEG patterns, and temporal interactions across frequency bands. This repository presents the project architecture and original PyTorch code, including the main model, leave-one-subject-out (LOSO) experiments, ablations, and comparison models.
 
 ![Overall architecture of PBG-MTFNet](docs/figures/architecture.png)
 
@@ -52,29 +52,7 @@ docs/
 
 Each experiment folder contains its own model, data loader, and training script. Comparison folders include EEGNet, ESTCNN, MSCNN_CAM, SFT, CSFGNeT, AMS_CNN, EEG_CONV, and EEG_CONV_R. Their folder names identify the archived implementations; this repository does not claim that these are official upstream implementations.
 
-## Data representation
-
-The project report describes five-band filtering, differential entropy feature extraction, 8 × 9 electrode-grid mapping, and temporal Kalman smoothing. **The raw-EEG preprocessing scripts are not included in this snapshot.** The included loaders expect precomputed `.npz` samples with key `sample` and shape `(T, 5, 8, 9)`.
-
-For the main SEED-VIG experiment:
-
-```text
-DATA_ROOT/
-├── data_seed/subject_00/sample_0000.npz
-└── labels/subject_00.csv        # PERCLOS column
-```
-
-For the main SADT experiment:
-
-```text
-DATA_ROOT/
-├── data_16589/subject_00/sample_0000.npz
-└── labels/subject_00.csv        # CLASS column, 0/1
-```
-
-SEED-VIG labels are binarized at `PERCLOS >= 0.35`. The main loaders require at least 50 labels from each class per included subject and normalize features per subject. Sample filenames are sorted by their numeric index and matched to label rows in order. The exact protocol and limitations are documented in [reproducibility notes](docs/REPRODUCIBILITY.md).
-
-## Environment and usage
+## Implementation environment
 
 The project report specifies **Python 3.10** and **PyTorch 2.4.0**. Dependencies are listed in `requirements.txt`; this is not a fully locked environment.
 
@@ -84,19 +62,12 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Before running an experiment, edit its `ROOT` variable to point to your prepared dataset. Historical server/local paths are preserved in the archived scripts. Run from the experiment directory so relative outputs stay together:
-
-```bash
-cd experiments/seed_model/F5T35
-python train.py
-```
-
-For SADT, use `experiments/SADT_model/F5T35`. For LOSO, inspect and configure `LOSO.py` in the relevant `LOSO` directory before running it.
-
 The main mixed-subject scripts use AdamW, cross-entropy loss, `ReduceLROnPlateau`, gradient clipping, and dropout. Their default configuration is 150 epochs, batch size 256, learning rate 0.005, weight decay 0.002, and a 60/20/20 random sample split. Checkpoints are selected by validation accuracy.
 
 ## Snapshot status
 
-This is an archive of **97 original Python source files**, with source behavior preserved. Model weights, datasets, caches, and historical result files are not included. The three diagrams were extracted from the author's project report.
+This repository contains **97 original Python source files**, project documentation, and three diagrams extracted from the author's project report. It is intended to showcase the code and project.
+
+**No third-party datasets, raw recordings, processed samples, labels, or trained model weights are distributed in this repository.**
 
 Static syntax and local-import checks are recorded in [reproducibility notes](docs/REPRODUCIBILITY.md). Full training has not been rerun for this repository, and no benchmark scores are asserted here. Review the implementation notes before treating the scripts as a validated reproduction package.
