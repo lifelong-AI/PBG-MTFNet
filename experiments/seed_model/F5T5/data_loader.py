@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-# ------------ 电极在 8x9 网格上的位置（True=有电极） ------------
+
 ELECTRODE_MATRIX = [
     ['', '', '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', '', ''],

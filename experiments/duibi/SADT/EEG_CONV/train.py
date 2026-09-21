@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 import os, time, numpy as np, pandas as pd, torch, torch.nn as nn
 from torch.utils.data import DataLoader
-# 修改点 1：确保从正确的文件导入
+
 from data_loader import EEGDataLoader, EEGDataset
 from model import EEGCONV
 
 
-# ===== 配置 =====
+
 ROOT        = r"/tmp/mycode/data_SADT"
 SUBJECTS    = 100
 BATCH       = 256
@@ -54,7 +54,7 @@ def train_epoch(model, loader, loss_fn, opt, device):
     ys = []
     ps = []
     for batch in loader:
-        x = batch['input_hw'].to(device)  # SFTNet 输入 [B,T,F,H,W]
+        x = batch['input_hw'].to(device)
         y = batch['target'].to(device).long()  # classification labels
         opt.zero_grad(set_to_none=True)
         logits = model(x)  # [B,2]
@@ -93,13 +93,13 @@ def main():
     set_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 1) 数据
+
     loader = EEGDataLoader(ROOT, subjects=SUBJECTS)
     all_samples, subject_data, _, _ = loader.get_all()
     n_total = len(all_samples)
     tr_idx, va_idx, te_idx = split_indices(n_total, SPLITS, SEED)
 
-    # 2) 数据集（调用参数与 data_loader 中修改后的 EEGDataset 匹配）
+
     train_ds = EEGDataset([all_samples[i] for i in tr_idx], subject_data, loader.idx_flat, loader.hw, return_hw=True)
     val_ds = EEGDataset([all_samples[i] for i in va_idx], subject_data, loader.idx_flat, loader.hw, return_hw=True)
     test_ds = EEGDataset([all_samples[i] for i in te_idx], subject_data, loader.idx_flat, loader.hw, return_hw=True)
@@ -108,14 +108,14 @@ def main():
     val = DataLoader(val_ds, batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
     tst = DataLoader(test_ds, batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
 
-    # 3) 模型（只用 SFTNet）
+
     model = EEGCONV().to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.6, patience=10, min_lr=1e-6)
     criterion = nn.CrossEntropyLoss()
 
-    # 4) 训练（按 ACC 保存最佳模型）
+
     best_acc, best_ep = -1.0, -1
     hist = []
     for ep in range(1, EPOCHS + 1):
@@ -144,7 +144,7 @@ def main():
 
     pd.DataFrame(hist).to_csv(os.path.join(RESULT_DIR, "history.csv"), index=False)
 
-    # 5) 测试（加载按 ACC 最佳模型）
+
     ckpt = os.path.join(CKPT_DIR, "best_acc.pth")
     if os.path.exists(ckpt):
         model.load_state_dict(torch.load(ckpt, map_location=device))

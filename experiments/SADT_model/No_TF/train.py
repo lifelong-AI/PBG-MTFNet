@@ -1,11 +1,11 @@
 # train.py
 import os, time, numpy as np, pandas as pd, torch, torch.nn as nn
 from torch.utils.data import DataLoader
-# <--- 修改点: 不再需要导入 compute_stats_crossband --->
+
 from data_loader import EEGDataLoader, EEGDataset
 from model import STGCN_PB_NoTF_FC
 
-# ===== 配置 =====
+
 ROOT        = r"/tmp/mycode/data_SADT"
 SUBJECTS    = 100
 BATCH       = 256
@@ -18,7 +18,7 @@ NUM_WORKERS = 0
 PIN_MEMORY  = True
 
 
-RESULT_DIR = "result_stgcn_strict_persubject_norm" # <--- 建议修改结果目录名以作区分
+RESULT_DIR = "result_stgcn_strict_persubject_norm"
 CKPT_DIR   = "checkpoints_stgcn_strict_persubject_norm"
 os.makedirs(RESULT_DIR, exist_ok=True)
 os.makedirs(CKPT_DIR,   exist_ok=True)
@@ -78,19 +78,19 @@ def main():
     set_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 1) 数据与图 (加载器已在内部完成归一化)
+
     loader = EEGDataLoader(ROOT, subjects=SUBJECTS)
     all_samples, subject_data, space_mask_hw, _ = loader.get_all()
     n_total = len(all_samples)
     tr_idx, va_idx, te_idx = split_indices(n_total, SPLITS, SEED)
 
-    # <--- 修改点: 不再需要计算全局统计量，删除此行 --->
+
     # mean_hw, std_hw = compute_stats_crossband(tr_idx, all_samples, subject_data, space_mask_hw)
 
-    # 固定图（严格只含真实电极）
+
     A_hat, E, idx_flat, hw = loader.get_graph(device=device)
 
-    # 2) 数据集 (不再需要传入 mean_hw, std_hw)
+
     train_ds = EEGDataset([all_samples[i] for i in tr_idx], subject_data, idx_flat, hw)
     val_ds   = EEGDataset([all_samples[i] for i in va_idx], subject_data, idx_flat, hw)
     test_ds  = EEGDataset([all_samples[i] for i in te_idx], subject_data, idx_flat, hw)
@@ -99,13 +99,13 @@ def main():
     val = DataLoader(val_ds,   batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
     tst = DataLoader(test_ds,  batch_size=BATCH, shuffle=False, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY)
 
-    # 3) 模型
+
     model = STGCN_PB_NoTF_FC(A_hat=A_hat, Freq=5, num_classes=2).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.6, patience=10, min_lr=1e-6)
     criterion = nn.CrossEntropyLoss()
 
-    # 4) 训练（按 ACC 保存最佳）
+
     best_acc, best_ep, best_val = -1.0, -1, None
     hist = []
     for ep in range(1, EPOCHS+1):
@@ -133,7 +133,7 @@ def main():
 
     pd.DataFrame(hist).to_csv(os.path.join(RESULT_DIR, "history.csv"), index=False)
 
-    # 5) 测试（加载按 ACC 最佳）
+
     ckpt = os.path.join(CKPT_DIR, "best_acc.pth")
     if os.path.exists(ckpt):
         model.load_state_dict(torch.load(ckpt, map_location=device))

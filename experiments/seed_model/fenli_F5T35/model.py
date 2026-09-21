@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ===================== 工具和基础模块 (无变动) =====================
+
 def normalize_adj(A: torch.Tensor, add_self_loop: bool = True, eps: float = 1e-6) -> torch.Tensor:
     E = A.size(0)
     if add_self_loop:
@@ -31,7 +31,7 @@ class GraphConvSimple(nn.Module):
 class PerBandGCN_NoAlpha(nn.Module):
     def __init__(self, A_hat, Freq, Cb, c_mid, dropout=0.5, normalize_A=True):
         super().__init__()
-        assert A_hat.dim() == 2 and A_hat.size(0) == A_hat.size(1), "A_hat 必须 [E,E]"
+        assert A_hat.dim() == 2 and A_hat.size(0) == A_hat.size(1), "A_hat must have shape [E,E]"
         self.register_buffer("A_hat", A_hat.clone())
         self.Freq, self.Cb, self.c_mid = Freq, Cb, c_mid
         self.normalize_A = bool(normalize_A)
@@ -60,23 +60,16 @@ class PerBandGCN_NoAlpha(nn.Module):
         return torch.cat(outs, dim=2)
 
 
-# ===================== 【新模块】多尺度分离式时频卷积 =====================
+
 class TF_SeparableMultiScaleConvBank(nn.Module):
-    """
-    输入:  H_stack [B, T, F, E, C_in]
-    做法:  更忠实于原设计的分离卷积。包含两个并行的分离卷积支路：
-           - 支路1 (模拟3x3): 先 (1,3) 频域卷积，再 (3,1) 时域卷积
-           - 支路2 (模拟5x5): 先 (1,5) 频域卷积，再 (5,1) 时域卷积
-           将两支路输出拼接。
-    输出:  H_tf [B, T, E, C_out]
-    """
+    ""
     def __init__(self, C_in, C_out, pdrop=0.2):
         super().__init__()
-        # 将输出通道均分给两个支路
+
         c1 = C_out // 2
         c2 = C_out - c1
 
-        # --- 支路1 (模拟 3x3) ---
+
         self.br1_freq_conv = nn.Sequential(
             nn.Conv2d(C_in, C_in, kernel_size=(1, 3), padding=(0, 1), bias=False),
             nn.GELU(),
@@ -86,7 +79,7 @@ class TF_SeparableMultiScaleConvBank(nn.Module):
             nn.GELU(),
         )
 
-        # --- 支路2 (模拟 5x5) ---
+
         self.br2_freq_conv = nn.Sequential(
             nn.Conv2d(C_in, C_in, kernel_size=(1, 5), padding=(0, 2), bias=False),
             nn.GELU(),
@@ -95,7 +88,7 @@ class TF_SeparableMultiScaleConvBank(nn.Module):
             nn.Conv2d(C_in, c2, kernel_size=(5, 1), padding=(2, 0), bias=False),
             nn.GELU(),
         )
-        
+
         self.norm = nn.LayerNorm(C_out)
         self.drop = nn.Dropout(pdrop)
 
@@ -103,15 +96,15 @@ class TF_SeparableMultiScaleConvBank(nn.Module):
         B, T, F, E, C = H_stack.shape
         x = H_stack.permute(0, 3, 4, 1, 2).contiguous().view(B * E, C, T, F)
 
-        # --- 支路1 ---
+
         y1_f = self.br1_freq_conv(x)    # [B*E, C_in, T, F]
         y1   = self.br1_time_conv(y1_f) # [B*E, c1, T, F]
-        
-        # --- 支路2 ---
+
+
         y2_f = self.br2_freq_conv(x)    # [B*E, C_in, T, F]
         y2   = self.br2_time_conv(y2_f) # [B*E, c2, T, F]
 
-        # 拼接两支路
+
         y = torch.cat([y1, y2], dim=1)  # [B*E, C_out, T, F]
 
         # LayerNorm & Dropout
@@ -119,17 +112,15 @@ class TF_SeparableMultiScaleConvBank(nn.Module):
         y = self.norm(y).view(B * E, T, F, -1)
         y = self.drop(y)
 
-        # 融合频段 & 还原形状
+
         y_tf = y.mean(dim=2)
         y_tf = y_tf.view(B, E, T, -1).permute(0, 2, 1, 3).contiguous()
         return y_tf
 
 
-# ===================== 【使用新模块的顶层模型】 =====================
+
 class STGCN_PB_Fsep_Ttemporal_FC(nn.Module):
-    """
-    流程: Per-Band GCN -> 多尺度分离式时频卷积 -> 池化 -> FC
-    """
+    ""
     def __init__(self, A_hat, Freq=5, Cb=16, Cmid=32, Ctf=48,
                  dropout=0.5, normalize_A=True,
                  num_classes=2, head_hidden=48, head_dropout=0.5):
@@ -139,9 +130,9 @@ class STGCN_PB_Fsep_Ttemporal_FC(nn.Module):
         self.pbgcn = PerBandGCN_NoAlpha(
             A_hat, Freq, Cb, Cmid, dropout=dropout, normalize_A=normalize_A
         )
-        # 【替换为】新的、更精确的多尺度分离卷积模块
+
         self.tfbank = TF_SeparableMultiScaleConvBank(C_in=Cmid, C_out=Ctf, pdrop=0.5)
-        
+
         self._head = None
         self._head_cfg = dict(num_classes=num_classes, head_hidden=head_hidden, head_dropout=head_dropout)
 

@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-# ------------ 电极在 8x9 网格上的位置（True=有电极） ------------
+
 ELECTRODE_MATRIX = [
     ['', '', '', '', '', '', '', '', ''],
     ['', '', '', '', '', '', '', '', ''],
@@ -149,7 +149,7 @@ class EEGDataLoader:
 
 
 class EEGDataset(Dataset):
-    # 修复点 1：增加 return_hw 参数以匹配 train.py 中的调用
+
     def __init__(self, samples, subject_data, idx_flat, hw, return_hw=False):
         self.samples = samples
         self.subject_data = subject_data
@@ -163,9 +163,9 @@ class EEGDataset(Dataset):
     def __getitem__(self, i):
         info = self.samples[i]
         x, y_cls, y_reg = self.subject_data[info['subject']]
-        x_hw = x[info['index']]  # 数据已经按被试标准化
+        x_hw = x[info['index']]
 
-        # 节点化数据 (用于图模型)
+
         xp_flat = x_hw.reshape(x_hw.shape[0], x_hw.shape[1], self.H * self.W)
         xp_e = xp_flat[:, :, self.idx_flat]
 
@@ -175,7 +175,7 @@ class EEGDataset(Dataset):
             "perclos": torch.tensor(y_reg[info['index']], dtype=torch.float32),
         }
 
-        # 修复点 2：根据 return_hw 标志，决定是否返回 SFTNet 需要的 'input_hw'
+
         if self.return_hw:
             out["input_hw"] = torch.from_numpy(x_hw).float()
 

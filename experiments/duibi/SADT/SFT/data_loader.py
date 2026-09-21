@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-# data_loader.py (已修改为按被试独立归一化)
+
 import os, glob, warnings
 import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-# ------------ SEED 8x9 网格（True=有电极；沿用你的“上面那版”） ------------
+
 ELECTRODE_MATRIX = [
     ['', '', '', 'FP1', '', 'FP2', '', '', ''],
     ['F7', '', 'F3', '', 'FZ', '', 'F4', '', 'F8'],
@@ -19,14 +19,14 @@ ELECTRODE_MATRIX = [
 ]
 
 
-# -------------------- 工具函数 --------------------
+
 def _space_mask_hw():
-    """8x9 网格上哪些格子是真实电极。"""
+    ""
     return np.array([[bool(c.strip()) for c in row] for row in ELECTRODE_MATRIX], dtype=bool)  # [H,W]
 
 
 def _nodes_from_mask(space_mask):
-    """返回: idx_flat[E], coords[E,2](y,x), (H,W)"""
+    ""
     H, W = space_mask.shape
     coords = np.argwhere(space_mask)  # [E,2]
     idx_flat = coords[:, 0] * W + coords[:, 1]
@@ -34,7 +34,7 @@ def _nodes_from_mask(space_mask):
 
 
 def _adj_from_coords(coords, device):
-    """8 邻域 + 自环 + 对称归一化 → A_hat:[E,E] (torch.float32)"""
+    ""
     E = coords.shape[0]
     A0 = torch.zeros((E, E), dtype=torch.float32, device=device)
     for i in range(E):
@@ -51,37 +51,28 @@ def _adj_from_coords(coords, device):
     return A_hat  # [E,E]
 
 
-# ---------------- 数据加载器（读取 HxW 网格数据 → 节点化为 [T,Freq,E]） ----------------
-class EEGDataLoader:
-    """
-    目录结构（与 train.py 保持一致）:
-      root/
-        ├─ data_16589/subject_xx/sample_0000.npz  (键 sample -> [T,Freq,H,W])
-        └─ labels/subject_xx.csv                 (含 'CLASS' 列，0/1)
 
-    输出：
-      - get_all() -> (all_samples, subject_data, space_mask_hw, mask_5)
-      - get_graph(device) -> (A_hat[E,E], E, idx_flat[E], (H,W))
-    """
+class EEGDataLoader:
+    ""
 
     def __init__(self, root_path, subjects=23, sample_key='sample', label_col='CLASS'):
         self.root = root_path
         self.sample_key = sample_key
         self.label_col = label_col
 
-        # 固定电极集合（一次性）
+
         space_mask = _space_mask_hw()
         self.idx_flat, self.coords_hw, self.hw = _nodes_from_mask(space_mask)
         self.E = len(self.idx_flat)
 
-        # 载入样本缓存（先按 H×W 读入，Dataset 再节点化为 [T,Freq,E]）
+
         self.subject_ids = [f"subject_{i:02d}" for i in range(subjects)]
         self.subject_data, self.all_samples = {}, []
         self._load()
 
-        # Z-score 用的 H×W 掩码
+
         self.space_mask_hw = space_mask
-        # 频段掩码（5 个频段时便于广播；若你的数据 F≠5，不用它也没关系）
+
         self.mask_5 = np.stack([space_mask] * 5, 0).astype(bool)
 
     def _load(self):
@@ -97,10 +88,10 @@ class EEGDataLoader:
 
             df = pd.read_csv(label_file)
             if self.label_col not in df.columns:
-                raise KeyError(f"{label_file} 未发现列 '{self.label_col}'")
+                raise KeyError(f"{label_file}: missing column '{self.label_col}'")
             labels_cls = df[self.label_col].astype(int).to_numpy()
 
-            # 样本筛选逻辑
+
             n_class_0 = np.sum(labels_cls == 0)
             n_class_1 = np.sum(labels_cls == 1)
 
@@ -114,29 +105,29 @@ class EEGDataLoader:
                 key=lambda p: int(os.path.basename(p).split('_')[1].split('.')[0])
             )
             if len(files) == 0:
-                warnings.warn(f"[{sid}] 未发现样本文件，跳过");
+                warnings.warn(f"[{sid}] No sample files found; skipping");
                 continue
 
             xs = []
             for f in files:
                 with np.load(f, allow_pickle=True) as z:
                     if self.sample_key not in z:
-                        raise KeyError(f"{f} 缺少键 '{self.sample_key}'")
+                        raise KeyError(f"{f}: missing key '{self.sample_key}'")
                     x = z[self.sample_key].astype(np.float32)
                     xs.append(x)
             arr = np.stack(xs, axis=0).astype(np.float32)
-            assert len(labels_cls) == arr.shape[0], f"{sid} 标签与样本数不一致"
+            assert len(labels_cls) == arr.shape[0], f"{sid}: label and sample counts do not match"
 
-            # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 主要修改点 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-            # 对当前被试的所有数据进行 Z-score 归一化
-            # 统计维度为 (样本数, 时间步, 频段)，为每个(H,W)位置计算均值和标准差
+
+
+
             mean = np.mean(arr, axis=(0, 1, 2), keepdims=True)
             std = np.std(arr, axis=(0, 1, 2), keepdims=True)
-            std = np.where(std < 1e-6, 1.0, std)  # 避免除以零
+            std = np.where(std < 1e-6, 1.0, std)
             arr = (arr - mean) / std
-            # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲ 修改结束 ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-            # 存储已经归一化好的数据
+
+
             self.subject_data[sid] = (arr, labels_cls)
             for i in range(arr.shape[0]):
                 self.all_samples.append({'subject': sid, 'index': i})
@@ -159,16 +150,11 @@ class EEGDataLoader:
         return A_hat, self.E, self.idx_flat, self.hw
 
 
-# ---------------- Dataset（不再执行归一化） ----------------
-class EEGDataset(Dataset):
-    """
-    返回：
-      - input_e: [T, Freq, E]（仅真实电极）
-      - target : int64 (0/1)
-      - （可选）input_hw: [T, Freq, H, W]（可视化/其他模型）
-    """
 
-    # 修改点：移除 mean_hw, std_hw 参数
+class EEGDataset(Dataset):
+    ""
+
+
     def __init__(self, samples, subject_data, idx_flat, hw, return_hw: bool = False):
         self.samples = samples
         self.subject_data = subject_data
@@ -181,14 +167,14 @@ class EEGDataset(Dataset):
 
     def __getitem__(self, i):
         info = self.samples[i]
-        # x_hw 是已经按被试归一化好的数据
+
         x_hw, y_cls = self.subject_data[info['subject']]
         x_hw_sample = x_hw[info['index']].astype(np.float32)
 
-        # 修改点：移除Z-score步骤，直接使用 x_hw_sample
+
         xp = np.nan_to_num(x_hw_sample, copy=False)
 
-        # 节点化（仅保留 E 个真实电极）
+
         xp_flat = xp.reshape(xp.shape[0], xp.shape[1], self.H * self.W)
         xp_e = xp_flat[:, :, self.idx_flat]
 
